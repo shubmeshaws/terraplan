@@ -7,12 +7,12 @@ import {
 import type {
   InviteUserInput,
   ListUsersQuery,
-  RoleAssignmentDto,
   SessionUser,
   UpdateUserRolesInput,
   UpdateUserStatusInput,
   UserDto,
 } from '@terraplan/shared';
+import { normalizeRoleAssignments } from '@terraplan/shared';
 import { toUserDto } from '@terraplan/shared/db';
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../infra/prisma.service';
@@ -50,7 +50,9 @@ export class UsersService {
   }
 
   async invite(actor: SessionUser, input: InviteUserInput, ip?: string | null): Promise<UserDto> {
-    this.assertUniqueEnvironments(input.assignments);
+    const assignments = normalizeRoleAssignments(input);
+    if (!assignments.length) throw new BadRequestException('Pick at least one role');
+
     const existing = await this.prisma.user.findUnique({ where: { email: input.email } });
     if (existing) {
       throw new ConflictException(`User ${input.email} already exists`);
@@ -64,8 +66,8 @@ export class UsersService {
         status: 'invited',
         invitedById: actor.id,
         roleAssignments: {
-          create: input.assignments.map((a) => ({
-            environment: a.environment,
+          create: assignments.map((a) => ({
+            environment: a.environment || '*',
             roleId: roleIds[a.role],
             assignedById: actor.id,
           })),
@@ -80,7 +82,7 @@ export class UsersService {
       action: 'users.invite',
       targetType: 'user',
       targetId: user.id,
-      metadata: { email: user.email, assignments: input.assignments },
+      metadata: { email: user.email, roles: assignments.map((a) => a.role) },
       ip,
     });
     return toUserDto(user);
@@ -92,7 +94,9 @@ export class UsersService {
     input: UpdateUserRolesInput,
     ip?: string | null,
   ): Promise<UserDto> {
-    this.assertUniqueEnvironments(input.assignments);
+    const assignments = normalizeRoleAssignments(input);
+    if (!assignments.length) throw new BadRequestException('Pick at least one role');
+
     const existing = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!existing) throw new NotFoundException(`User ${userId} not found`);
 
@@ -100,9 +104,9 @@ export class UsersService {
     await this.prisma.$transaction(async (tx) => {
       await tx.roleAssignment.deleteMany({ where: { userId } });
       await tx.roleAssignment.createMany({
-        data: input.assignments.map((a) => ({
+        data: assignments.map((a) => ({
           userId,
-          environment: a.environment,
+          environment: a.environment || '*',
           roleId: roleIds[a.role],
           assignedById: actor.id,
         })),
@@ -115,7 +119,7 @@ export class UsersService {
       action: 'users.change_roles',
       targetType: 'user',
       targetId: userId,
-      metadata: { email: existing.email, assignments: input.assignments },
+      metadata: { email: existing.email, roles: assignments.map((a) => a.role) },
       ip,
     });
     return this.get(userId);
@@ -153,16 +157,6 @@ export class UsersService {
 
   async roles() {
     return this.prisma.role.findMany({ orderBy: { name: 'asc' } });
-  }
-
-  private assertUniqueEnvironments(assignments: RoleAssignmentDto[]) {
-    const seen = new Set<string>();
-    for (const a of assignments) {
-      if (seen.has(a.environment)) {
-        throw new BadRequestException(`Duplicate assignment for environment ${a.environment}`);
-      }
-      seen.add(a.environment);
-    }
   }
 
   private async roleIdMap(): Promise<Record<string, string>> {

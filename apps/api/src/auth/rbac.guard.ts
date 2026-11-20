@@ -9,7 +9,7 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import type { Environment, Permission, SessionUser } from '@terraplan/shared';
-import { hasPermission, isAdmin } from '@terraplan/shared';
+import { ENVIRONMENTS, isAdmin, userHasPermission } from '@terraplan/shared';
 import type { AuthedRequest } from './auth.guard';
 
 export const PERMISSION_KEY = 'terraplan.permission';
@@ -60,7 +60,9 @@ export class RbacGuard implements CanActivate {
     ]);
 
     if (!envParam) {
-      const ok = user.assignments.some((a) => hasPermission(a.role, a.environment, permission!));
+      const ok = ENVIRONMENTS.some((environment) =>
+        userHasPermission(user.assignments, environment, permission!),
+      );
       if (!ok) throw new ForbiddenException(`Missing permission: ${permission}`);
       return true;
     }
@@ -69,8 +71,7 @@ export class RbacGuard implements CanActivate {
     if (!environment) {
       throw new ForbiddenException(`Environment is required (${envParam})`);
     }
-    const assignment = user.assignments.find((a) => a.environment === environment);
-    if (!hasPermission(assignment?.role, environment, permission!)) {
+    if (!userHasPermission(user.assignments, environment, permission!)) {
       throw new ForbiddenException(
         `Missing permission ${permission} on environment ${environment}`,
       );
@@ -93,8 +94,7 @@ export function assertPermission(
   environment: Environment,
   permission: Permission,
 ) {
-  const assignment = user.assignments.find((a) => a.environment === environment);
-  if (!hasPermission(assignment?.role, environment, permission)) {
+  if (!userHasPermission(user.assignments, environment, permission)) {
     throw new ForbiddenException(`Missing permission ${permission} on environment ${environment}`);
   }
 }

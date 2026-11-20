@@ -17,7 +17,7 @@ export function ScriptLoader() {
         onLoad={() => setThreeReady(true)}
         onError={() => setThreeReady(true)}
       />
-      {threeReady ? <Script src="/terraplan.js?v=wx69" strategy="afterInteractive" /> : null}
+      {threeReady ? <Script src="/terraplan.js?v=wx73" strategy="afterInteractive" /> : null}
     </>
   );
 }

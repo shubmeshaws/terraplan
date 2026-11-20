@@ -3205,39 +3205,91 @@ function chooseLockWait({environment,action,busy}){
 
 /* ── Create / edit group modal ──────────────────────────────────── */
 
-/* Custom styled dropdown — same look as role-dd, fully CSS-matching */
-function _cgSelect(id,opts,selected){
+/* Multi-select dropdown with chips — used for repositories & roles */
+function _cgMultiSelect(id,opts,selected){
  const valOf=o=>typeof o==='object'?String(o.value):String(o);
  const labOf=o=>typeof o==='object'?o.label:o;
- const sel=selected==null?'':String(selected);
- const cur=opts.find(o=>valOf(o)===sel)||opts[0];
- const curVal=cur==null?'':valOf(cur);
- const curLab=cur==null?'Select':labOf(cur);
- const items=opts.map(o=>{const v=valOf(o),l=labOf(o);
-  return '<button type="button" class="ami'+(v===sel?' on':'')+'" role="option" data-val="'+esc(v)+'"'+(v===sel?' aria-selected="true"':'')+'>'+esc(l)+'</button>';
+ const sel=new Set((Array.isArray(selected)?selected:[selected]).filter(v=>v!=null&&v!=='').map(String));
+ if(!sel.size&&opts.some(o=>valOf(o)==='All'))sel.add('All');
+ const label=()=>{
+  const vals=[...sel];
+  if(!vals.length)return 'Select…';
+  if(vals.includes('All')&&vals.length===1)return 'All';
+  if(vals.length<=2)return vals.map(v=>{const o=opts.find(x=>valOf(x)===v);return o?labOf(o):v}).join(', ');
+  return vals.length+' selected';
+ };
+ const items=opts.map(o=>{const v=valOf(o),l=labOf(o),on=sel.has(v);
+  return '<button type="button" class="ami cg-multi-opt'+(on?' on':'')+'" role="option" data-val="'+esc(v)+'" aria-selected="'+(on?'true':'false')+'">'
+   +'<span class="cg-multi-chk">'+(on?'✓':'')+'</span>'+esc(l)+'</button>';
  }).join('');
- return '<div class="role-dd cg-dd" data-cgid="'+esc(id)+'">'
+ const chips=[...sel].map(v=>{const o=opts.find(x=>valOf(x)===v);const l=o?labOf(o):v;
+  return '<span class="cg-chip" data-val="'+esc(v)+'">'+esc(l)+'<button type="button" aria-label="Remove">×</button></span>';
+ }).join('');
+ return '<div class="role-dd cg-dd cg-multi" data-cgid="'+esc(id)+'" data-multi="1">'
   +'<div class="role-dd-wrap">'
   +'<button type="button" class="role-dd-trig" aria-haspopup="listbox" aria-expanded="false">'
-  +'<span class="role-dd-val">'+esc(curLab)+'</span>'
+  +'<span class="role-dd-val">'+esc(label())+'</span>'
   +'<svg class="role-dd-chv" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>'
   +'</button>'
-  +'<input type="hidden" id="'+esc(id)+'" value="'+esc(curVal)+'">'
+  +'<input type="hidden" id="'+esc(id)+'" value="'+esc([...sel].join(','))+'">'
   +'<div class="mn act role-dd-mn hide" role="listbox">'+items+'</div>'
-  +'</div></div>';
+  +'</div>'
+  +'<div class="cg-multi-chips" data-chips="'+esc(id)+'">'+(chips||'<span class="cg-chips-empty">None selected</span>')+'</div>'
+  +'</div>';
 }
 function _wireCgSelects(body){
+ const closeAll=()=>body.querySelectorAll('.role-dd-mn').forEach(m=>{m.classList.add('hide');const t=m.closest('.role-dd')&&m.closest('.role-dd').querySelector('.role-dd-trig');if(t){t.classList.remove('open');t.setAttribute('aria-expanded','false')}});
  body.querySelectorAll('.cg-dd').forEach(dd=>{
   if(dd.__wired)return;dd.__wired=true;
   const trig=dd.querySelector('.role-dd-trig');
   const mn=dd.querySelector('.role-dd-mn');
   const hid=dd.querySelector('input[type="hidden"]');
   const val=dd.querySelector('.role-dd-val');
-  const closeAll=()=>body.querySelectorAll('.role-dd-mn').forEach(m=>{m.classList.add('hide');const t=m.closest('.role-dd')&&m.closest('.role-dd').querySelector('.role-dd-trig');if(t){t.classList.remove('open');t.setAttribute('aria-expanded','false')}});
+  const chips=dd.querySelector('.cg-multi-chips');
+  const selected=()=>new Set((hid.value||'').split(',').map(s=>s.trim()).filter(Boolean));
+  const paint=()=>{
+   const sel=selected();
+   const vals=[...sel];
+   const findOpt=v=>[...mn.querySelectorAll('.ami')].find(o=>o.dataset.val===v);
+   hid.value=vals.join(',');
+   if(!vals.length)val.textContent='Select…';
+   else if(vals.includes('All')&&vals.length===1)val.textContent='All';
+   else if(vals.length<=2)val.textContent=vals.map(v=>{const opt=findOpt(v);return opt?opt.textContent.replace(/^✓/,'').trim():v}).join(', ');
+   else val.textContent=vals.length+' selected';
+   mn.querySelectorAll('.ami').forEach(opt=>{
+    const on=sel.has(opt.dataset.val);
+    opt.classList.toggle('on',on);
+    opt.setAttribute('aria-selected',on?'true':'false');
+    const chk=opt.querySelector('.cg-multi-chk');if(chk)chk.textContent=on?'✓':'';
+   });
+   if(chips){
+    chips.innerHTML=vals.length
+     ?vals.map(v=>{const opt=findOpt(v);const lab=opt?opt.textContent.replace(/^✓/,'').trim():v;return '<span class="cg-chip" data-val="'+esc(v)+'">'+esc(lab)+'<button type="button" aria-label="Remove">×</button></span>'}).join('')
+     :'<span class="cg-chips-empty">None selected</span>';
+   }
+   hid.dispatchEvent(new Event('change',{bubbles:true}));
+  };
   trig.addEventListener('click',e=>{e.stopPropagation();const open=!mn.classList.contains('hide');closeAll();if(open)return;mn.classList.remove('hide');trig.classList.add('open');trig.setAttribute('aria-expanded','true')});
-  mn.querySelectorAll('.ami').forEach(opt=>{opt.addEventListener('click',e=>{e.stopPropagation();hid.value=opt.dataset.val;val.textContent=opt.textContent;mn.querySelectorAll('.ami').forEach(x=>{x.classList.toggle('on',x===opt);x.setAttribute('aria-selected',x===opt?'true':'false')});closeAll();hid.dispatchEvent(new Event('change',{bubbles:true}))})});
+  mn.querySelectorAll('.ami').forEach(opt=>{opt.addEventListener('click',e=>{
+   e.stopPropagation();
+   const sel=selected();
+   const v=opt.dataset.val;
+   if(v==='All'){sel.clear();sel.add('All')}
+   else{
+    sel.delete('All');
+    sel.has(v)?sel.delete(v):sel.add(v);
+   }
+   hid.value=[...sel].join(',');
+   paint();
+  })});
+  if(chips)chips.addEventListener('click',e=>{
+   const btn=e.target.closest('button[aria-label="Remove"]');if(!btn)return;
+   const chip=btn.closest('.cg-chip');if(!chip)return;
+   e.stopPropagation();
+   const sel=selected();sel.delete(chip.dataset.val);hid.value=[...sel].join(',');paint();
+  });
  });
- if(!body.__cgClick){body.__cgClick=true;body.addEventListener('click',e=>{if(!e.target.closest('.cg-dd')&&!e.target.closest('.ig-az-dd'))body.querySelectorAll('.role-dd-mn').forEach(m=>{m.classList.add('hide');const t=m.closest('.role-dd')&&m.closest('.role-dd').querySelector('.role-dd-trig');if(t){t.classList.remove('open');t.setAttribute('aria-expanded','false')}})})}
+ if(!body.__cgClick){body.__cgClick=true;body.addEventListener('click',e=>{if(!e.target.closest('.cg-dd')&&!e.target.closest('.ig-az-dd'))closeAll()})}
 }
 function _groupMemberPickerHTML(selectedIds,users){
  /* Builds the member picker: searchbar + user list + selected chips */
@@ -3294,36 +3346,173 @@ function _wireGroupMemberPicker(body,selectedIds,users){
  body.getSelectedMembers=()=>[...sel];
 }
 
+/* ── Roles store (sidebar permissions) ─────────────────────────── */
+const SIDEBAR_PERMS=[
+ {group:'Overview',items:['Dashboard']},
+ {group:'Terraform',items:['Terraform Plan','Live locks','Terraform Automate']},
+ {group:'Code',items:['Repositories','Branches','Pull requests','Modules']},
+ {group:'Environments',items:['Workspaces','State files','Drift detection']},
+ {group:'Admin',items:['Users','Connect Repositories','Integration','Workers','Variables','Notifications','Audit log']}
+];
+const ALL_SIDEBAR_VIEWS=SIDEBAR_PERMS.flatMap(g=>g.items);
+const DEFAULT_ROLE_DEFS={
+ Admin:{name:'Admin',description:'Full access. First SSO user after setup.',builtin:true,permissions:ALL_SIDEBAR_VIEWS.slice()},
+ Viewer:{name:'Viewer',description:'Default SSO role after the first admin.',builtin:true,permissions:['Dashboard','Terraform Plan','Live locks','Repositories','Branches','Pull requests','Workspaces']}
+};
+function rolesStore(){
+ let custom=[];
+ try{custom=JSON.parse(sessionStorage.getItem('tp-roles')||'[]')}catch(e){}
+ const byName={};
+ Object.values(DEFAULT_ROLE_DEFS).forEach(r=>{byName[r.name]={...r,permissions:(r.permissions||[]).slice()}});
+ (custom||[]).forEach(r=>{
+  if(!r||!r.name)return;
+  if(byName[r.name]&&byName[r.name].builtin){
+   byName[r.name]={...byName[r.name],description:r.description||byName[r.name].description,permissions:Array.isArray(r.permissions)?r.permissions.slice():byName[r.name].permissions};
+  }else{
+   byName[r.name]={name:r.name,description:r.description||'',builtin:false,permissions:Array.isArray(r.permissions)?r.permissions.slice():[]};
+  }
+ });
+ return Object.values(byName).sort((a,b)=>{
+  const rank=n=>n==='Admin'?0:n==='Viewer'?1:2;
+  const d=rank(a.name)-rank(b.name);return d||a.name.localeCompare(b.name);
+ });
+}
+function saveRolesStore(list){
+ const custom=(list||[]).map(r=>({name:r.name,description:r.description||'',builtin:!!r.builtin,permissions:(r.permissions||[]).slice()}));
+ try{sessionStorage.setItem('tp-roles',JSON.stringify(custom))}catch(e){}
+}
+function roleNamesList(){return rolesStore().map(r=>r.name)}
+function _sidebarPermsHTML(selected){
+ const set=new Set(selected||[]);
+ const rows=SIDEBAR_PERMS.map(g=>{
+  const allOn=g.items.every(i=>set.has(i));
+  const head='<tr class="rp-sec-row">'
+   +'<td class="rp-sec" colspan="2">'
+   +'<label class="rp-group-all"><input type="checkbox" data-rp-group="'+esc(g.group)+'"'+(allOn?' checked':'')+'>'
+   +'<span>'+esc(g.group)+'</span></label></td>'
+   +'<td class="rp-allow rp-allow-head"></td></tr>';
+  const body=g.items.map(i=>'<tr class="rp-row">'
+   +'<td class="rp-sec rp-sec-spacer"></td>'
+   +'<td class="rp-page"><span class="rp-page-label">'+esc(i)+'</span></td>'
+   +'<td class="rp-allow"><input type="checkbox" data-rp-view="'+esc(i)+'"'+(set.has(i)?' checked':'')+' aria-label="Allow '+esc(i)+'"></td>'
+   +'</tr>').join('');
+  return head+body;
+ }).join('');
+ return '<div class="rp-perms">'
+  +'<table class="rp-table" role="grid" aria-label="Sidebar permissions">'
+  +'<thead><tr><th class="rp-sec">Section</th><th class="rp-page">Sidebar page</th><th class="rp-allow">Allow</th></tr></thead>'
+  +'<tbody>'+rows+'</tbody></table></div>';
+}
+function _wireSidebarPerms(body){
+ const viewBox=name=>[...body.querySelectorAll('input[data-rp-view]')].find(x=>x.dataset.rpView===name);
+ const groupBox=name=>[...body.querySelectorAll('input[data-rp-group]')].find(x=>x.dataset.rpGroup===name);
+ const syncGroup=g=>{
+  const items=SIDEBAR_PERMS.find(x=>x.group===g);if(!items)return;
+  const boxes=items.items.map(viewBox).filter(Boolean);
+  const head=groupBox(g);
+  if(!head||!boxes.length)return;
+  const on=boxes.filter(b=>b.checked).length;
+  head.checked=on===boxes.length;
+  head.indeterminate=on>0&&on<boxes.length;
+ };
+ SIDEBAR_PERMS.forEach(g=>syncGroup(g.group));
+ body.addEventListener('change',e=>{
+  const t=e.target;
+  if(t&&t.matches('input[data-rp-group]')){
+   const g=t.dataset.rpGroup;
+   const items=SIDEBAR_PERMS.find(x=>x.group===g);if(!items)return;
+   items.items.forEach(i=>{const box=viewBox(i);if(box)box.checked=t.checked});
+   syncGroup(g);return;
+  }
+  if(t&&t.matches('input[data-rp-view]')){
+   const view=t.dataset.rpView;
+   const g=(SIDEBAR_PERMS.find(x=>x.items.includes(view))||{}).group;
+   if(g)syncGroup(g);
+  }
+ });
+ body.getSelectedPerms=()=>[...body.querySelectorAll('input[data-rp-view]:checked')].map(x=>x.dataset.rpView);
+}
+function openRoleModal(existingRole){
+ if(!isAdmin()){toast('Admin only');return}
+ closeUModal();
+ const isEdit=!!existingRole;
+ const title=isEdit?'Edit role':'Create role';
+ const r=existingRole||{name:'',description:'',permissions:DEFAULT_ROLE_DEFS.Viewer.permissions.slice(),builtin:false};
+ const lockedName=isEdit&&r.builtin;
+ const body=document.createElement('div');body.className='umodal';body.id='umodal';
+ body.innerHTML=
+  '<div class="md card-md cr-modal role-modal">'
+  +'<div class="md-hd"><h3>'+esc(title)+'</h3><p class="md-cs">Choose which sidebar pages this role can open.</p></div>'
+  +'<div class="md-bd">'
+  +'<label>Role name</label>'
+  +'<input id="rl-name" value="'+esc(r.name)+'" placeholder="e.g. Operator, Auditor"'+(lockedName?' readonly':'')+'>'
+  +(lockedName?'<p class="sub" style="margin-top:-6px">Built-in role — name is fixed; you can still change sidebar permissions.</p>':'')
+  +'<label>Description <span class="sub">(optional)</span></label>'
+  +'<input id="rl-desc" value="'+esc(r.description||'')+'" placeholder="What this role is for">'
+  +'<label>Sidebar permissions</label>'
+  +_sidebarPermsHTML(r.permissions||[])
+  +'</div>'
+  +'<div class="md-ft ra"><button type="button" class="b2" id="ucancel">Cancel</button><button type="button" class="b1" id="usave">'+esc(title)+'</button></div>'
+  +'</div>';
+ document.body.appendChild(body);
+ _wireSidebarPerms(body);
+ body.querySelector('#ucancel').onclick=closeUModal;
+ body.onclick=e=>{if(e.target===body)closeUModal()};
+ body.querySelector('#usave').onclick=()=>{
+  const name=body.querySelector('#rl-name').value.trim();
+  if(!name){toast('Role name is required');return}
+  if(!/^[A-Za-z][A-Za-z0-9 _-]{0,40}$/.test(name)){toast('Use a short role name (letters, numbers, spaces)');return}
+  const permissions=body.getSelectedPerms();
+  if(!permissions.length){toast('Select at least one sidebar page');return}
+  const list=rolesStore();
+  const entry={name,description:body.querySelector('#rl-desc').value.trim(),builtin:!!(existingRole&&existingRole.builtin),permissions};
+  const i=list.findIndex(x=>x.name===(existingRole?existingRole.name:name));
+  if(isEdit){
+   if(i<0)list.push(entry);else list[i]=entry;
+  }else{
+   if(list.some(x=>x.name.toLowerCase()===name.toLowerCase())){toast('A role named "'+name+'" already exists');return}
+   list.push(entry);
+  }
+  saveRolesStore(list);
+  toast(isEdit?'Role updated':'Role "'+name+'" created');
+  closeUModal();
+  if(window.__refreshUsers)window.__refreshUsers();
+ };
+}
+
 function openCreateGroupModal(existingGroup){
  closeUModal();
  const title=existingGroup?'Edit group':'Create group';
- const ROLES_ALL=['Viewer','Planner','Applier','Admin'];
- const g=existingGroup||{name:'',repositories:'All',environments:'All',defaultRole:'Planner',description:'',memberIds:[]};
+ const roleChoices=roleNamesList();
+ const g=existingGroup||{name:'',repositories:['All'],roles:['Viewer'],permissions:[],description:'',memberIds:[]};
  const users=window.__usersCache||[];
  const selectedIds=g.memberIds||[];
  const repoChoices=['All'].concat(crRepos().map(r=>repoSlugFromUrl(r.url)||r.url).filter(Boolean));
- const envChoices=['All',...allEnvNames()];
+ const selectedRepos=Array.isArray(g.repositories)?g.repositories:String(g.repositories||'All').split(',').map(s=>s.trim()).filter(Boolean);
+ const selectedRoles=Array.isArray(g.roles)?g.roles:String(g.defaultRole||g.roles||'Viewer').split(',').map(s=>s.trim()).filter(Boolean);
+ const selectedPerms=Array.isArray(g.permissions)?g.permissions.slice():[];
  const body=document.createElement('div');body.className='umodal';body.id='umodal';
  body.innerHTML=
   '<div class="md card-md cr-modal">'
-  +'<div class="md-hd"><h3>'+esc(title)+'</h3><p class="md-cs">Groups control repository and environment access for all members.</p></div>'
+  +'<div class="md-hd"><h3>'+esc(title)+'</h3><p class="md-cs">Edit repositories, roles, and optional sidebar permissions for this group.</p></div>'
   +'<div class="md-bd">'
   +'<label>Group name</label>'
-  +'<input id="cg-name" value="'+esc(g.name)+'" placeholder="e.g. Platform, Backend, Data">'
+  +'<input id="cg-name" value="'+esc(g.name)+'" placeholder="e.g. Platform, Backend, Data"'+(existingGroup?'':'')+'>'
   +'<label>Description <span class="sub">(optional)</span></label>'
   +'<input id="cg-desc" value="'+esc(g.description||'')+'" placeholder="Short description of this group">'
   +'<label>Repositories</label>'
-  +_cgSelect('cg-repos',repoChoices,g.repositories||'All')
-  +'<label>Environments</label>'
-  +_cgSelect('cg-envs',envChoices,g.environments||'All')
-  +'<label>Default role</label>'
-  +_cgSelect('cg-role',ROLES_ALL,g.defaultRole||'Planner')
+  +_cgMultiSelect('cg-repos',repoChoices,selectedRepos)
+  +'<label>Roles</label>'
+  +_cgMultiSelect('cg-roles',roleChoices,selectedRoles)
+  +'<label>Sidebar permissions <span class="sub">(optional override)</span></label>'
+  +_sidebarPermsHTML(selectedPerms)
   +_groupMemberPickerHTML(selectedIds,users)
   +'</div>'
   +'<div class="md-ft ra"><button type="button" class="b2" id="ucancel">Cancel</button><button type="button" class="b1" id="usave">'+esc(title)+'</button></div>'
   +'</div>';
  document.body.appendChild(body);
  _wireCgSelects(body);
+ _wireSidebarPerms(body);
  _wireGroupMemberPicker(body,selectedIds,users);
  body.querySelector('#ucancel').onclick=closeUModal;
  body.onclick=e=>{if(e.target===body)closeUModal()};
@@ -3331,19 +3520,28 @@ function openCreateGroupModal(existingGroup){
   const name=body.querySelector('#cg-name').value.trim();
   if(!name){toast('Group name is required');return}
   const memberIds=body.getSelectedMembers();
+  const repositories=(body.querySelector('#cg-repos').value||'').split(',').map(s=>s.trim()).filter(Boolean);
+  const roles=(body.querySelector('#cg-roles').value||'').split(',').map(s=>s.trim()).filter(Boolean);
+  const permissions=body.getSelectedPerms();
+  if(!repositories.length){toast('Select at least one repository');return}
+  if(!roles.length){toast('Select at least one role');return}
   const entry={
    name,
    description:body.querySelector('#cg-desc').value.trim(),
-   repositories:body.querySelector('#cg-repos').value,
-   environments:body.querySelector('#cg-envs').value,
-   defaultRole:body.querySelector('#cg-role').value,
+   repositories,
+   roles,
+   permissions,
+   defaultRole:roles.join(', '),
    members:memberIds.length,
    memberIds
   };
   try{
    const groups=JSON.parse(sessionStorage.getItem('tp-groups')||'[]');
-   if(existingGroup){const i=groups.findIndex(g=>g.name===existingGroup.name);if(i>=0)groups[i]=entry;else groups.push(entry);}
-   else groups.push(entry);
+   if(existingGroup){const i=groups.findIndex(x=>x.name===existingGroup.name);if(i>=0)groups[i]=entry;else groups.push(entry);}
+   else{
+    if(groups.some(x=>x.name.toLowerCase()===name.toLowerCase())){toast('A group named "'+name+'" already exists');return}
+    groups.push(entry);
+   }
    sessionStorage.setItem('tp-groups',JSON.stringify(groups));
   }catch(e){}
   toast(existingGroup?'Group updated':'Group "'+name+'" created');
@@ -3664,48 +3862,30 @@ side.querySelectorAll('.sh').forEach(b=>b.addEventListener('click',()=>{const g=
  });
 })();
 const AFm={'Terraform Plan':['','Terraform Plan','Every plan, apply and destroy across all environments.']};
-const ROLES=['Viewer','Planner','Applier','Admin'];
-const ROLE_CHV='<svg class="role-dd-chv" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-function roleSelects(selected){const map=Object.fromEntries((selected||[]).map(a=>[a.environment,a.role]));
- return ENVS.map(e=>{const cur=map[e]||'';const shown=cur||'— none —';
-  const opts=[['','— none —']].concat(ROLES.map(r=>[r,r])).map(([v,lab])=>'<button type="button" class="ami'+(v===cur?' on':'')+'" role="option" data-role="'+esc(v)+'"'+(v===cur?' aria-selected="true"':'')+'>'+esc(lab)+'</button>').join('');
-  return '<div class="role-dd" data-env="'+esc(e)+'">'
-   +'<span class="role-dd-lab">'+esc(e)+'</span>'
-   +'<div class="role-dd-wrap">'
-   +'<button type="button" class="role-dd-trig" aria-haspopup="listbox" aria-expanded="false"><span class="role-dd-val">'+esc(shown)+'</span>'+ROLE_CHV+'</button>'
-   +'<input type="hidden" data-env="'+esc(e)+'" value="'+esc(cur)+'">'
-   +'<div class="mn act role-dd-mn hide" role="listbox">'+opts+'</div>'
-   +'</div></div>'}).join('')}
-function readAssignments(root){return [...root.querySelectorAll('input[data-env]')].map(s=>({environment:s.dataset.env,role:s.value})).filter(a=>a.role)}
-function wireRoleDropdowns(root){
- const closeAll=()=>{root.querySelectorAll('.role-dd-mn').forEach(m=>m.classList.add('hide'));
-  root.querySelectorAll('.role-dd-trig').forEach(t=>{t.classList.remove('open');t.setAttribute('aria-expanded','false')})};
- root.querySelectorAll('.role-dd').forEach(dd=>{
-  const trig=dd.querySelector('.role-dd-trig'),mn=dd.querySelector('.role-dd-mn'),hid=dd.querySelector('input[data-env]'),val=dd.querySelector('.role-dd-val');
-  if(!trig||!mn||!hid||!val)return;
-  trig.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();
-   const open=!mn.classList.contains('hide');closeAll();
-   if(open)return;
-   mn.classList.remove('hide');trig.classList.add('open');trig.setAttribute('aria-expanded','true')});
-  mn.querySelectorAll('.ami').forEach(opt=>{opt.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();
-   const role=opt.dataset.role||'';hid.value=role;val.textContent=role||'— none —';
-   mn.querySelectorAll('.ami').forEach(x=>{x.classList.toggle('on',x===opt);x.setAttribute('aria-selected',x===opt?'true':'false')});
-   closeAll()})});
- });
- root.addEventListener('click',e=>{if(!e.target.closest('.role-dd'))closeAll()});
+function roleCheckboxes(selected){
+ const set=new Set((selected||[]).map(a=>typeof a==='string'?a:a.role).filter(Boolean));
+ if(!set.size)set.add('Viewer');
+ /* User assignment is Admin/Viewer at the API; custom roles manage sidebar access in Roles/Groups. */
+ const defs=rolesStore().filter(r=>r.name==='Admin'||r.name==='Viewer');
+ return '<div class="role-checks">'
+  +defs.map(r=>'<label class="role-check"><input type="checkbox" data-role="'+esc(r.name)+'"'+(set.has(r.name)?' checked':'')+'> <span>'+esc(r.name)+'</span>'
+   +'<small>'+esc(r.description||((r.permissions||[]).length+' sidebar pages'))+'</small></label>').join('')
+  +'</div>';
 }
+function readRoles(root){return [...root.querySelectorAll('input[data-role]:checked')].map(s=>s.dataset.role).filter(Boolean)}
 function closeUModal(){const m=$('umodal');if(m)m.remove()}
 function openUserModal(mode,user){closeUModal();const title=mode==='invite'?'Invite user':mode==='roles'?'Change roles':'Update user';
  const body=document.createElement('div');body.className='umodal';body.id='umodal';
+ const selectedRoles=user?(user.roles||(user.assignments||[]).map(a=>a.role)):[];
  const head=mode==='invite'
-  ?'<div class="md-hd"><h3>'+esc(title)+'</h3><p class="md-cs">Invite someone and assign environment roles.</p></div><div class="md-bd"><label>Email</label><input id="uemail" type="email" placeholder="name@company.com"><label>Name</label><input id="unamei" placeholder="Optional">'
-  :'<div class="md-hd"><h3>'+esc(title)+'</h3><p class="md-cs mono">'+esc(user.email)+'</p></div><div class="md-bd"><p class="md-sec">Role per environment</p>';
- body.innerHTML='<div class="md card-md">'+head+'<div class="env-roles">'+roleSelects(user&&user.assignments)+'</div></div><div class="md-ft ra"><button type="button" class="b2" id="ucancel">Cancel</button><button type="button" class="b1" id="usave">'+(mode==='invite'?'Send invite':'Save roles')+'</button></div></div>';
- document.body.appendChild(body);wireRoleDropdowns(body);body.querySelector('#ucancel').onclick=closeUModal;body.onclick=e=>{if(e.target===body)closeUModal()};
- body.querySelector('#usave').onclick=async()=>{const assignments=readAssignments(body);if(!assignments.length){toast('Pick at least one environment role');return}
+  ?'<div class="md-hd"><h3>'+esc(title)+'</h3><p class="md-cs">Invite someone and assign Admin and/or Viewer.</p></div><div class="md-bd"><label>Email</label><input id="uemail" type="email" placeholder="name@company.com"><label>Name</label><input id="unamei" placeholder="Optional">'
+  :'<div class="md-hd"><h3>'+esc(title)+'</h3><p class="md-cs mono">'+esc(user.email)+'</p></div><div class="md-bd"><p class="md-sec">Roles <span class="sub">(multi-select)</span></p>';
+ body.innerHTML='<div class="md card-md">'+head+roleCheckboxes(selectedRoles)+'</div><div class="md-ft ra"><button type="button" class="b2" id="ucancel">Cancel</button><button type="button" class="b1" id="usave">'+(mode==='invite'?'Send invite':'Save roles')+'</button></div></div>';
+ document.body.appendChild(body);body.querySelector('#ucancel').onclick=closeUModal;body.onclick=e=>{if(e.target===body)closeUModal()};
+ body.querySelector('#usave').onclick=async()=>{const roles=readRoles(body);if(!roles.length){toast('Pick at least one role');return}
   const btn=body.querySelector('#usave');btn.disabled=true;
-  try{if(mode==='invite'){await api('/users/invite',{method:'POST',body:JSON.stringify({email:$('uemail').value,name:$('unamei').value||undefined,assignments})});toast('Invite created')}
-   else{await api('/users/'+encodeURIComponent(user.id)+'/roles',{method:'PATCH',body:JSON.stringify({assignments})});toast('Roles updated')}
+  try{if(mode==='invite'){await api('/users/invite',{method:'POST',body:JSON.stringify({email:$('uemail').value,name:$('unamei').value||undefined,roles})});toast('Invite created')}
+   else{await api('/users/'+encodeURIComponent(user.id)+'/roles',{method:'PATCH',body:JSON.stringify({roles})});toast('Roles updated')}
    closeUModal();if(window.__refreshUsers)window.__refreshUsers()}catch(err){toast(err.message);btn.disabled=false}}}
 function syncUsersBulkBtns(){
  const n=document.querySelectorAll('#gt .u-chk:checked').length;
@@ -3727,12 +3907,13 @@ window.__wireUsersTable=function(){
 async function usersAdmin(){if(!isAdmin())return hd('Users','Users','Admin access required.')+'<p class="sub">Only Admins can invite, disable and change roles.</p>';
  const users=await api('/users');const counts={active:0,invited:0,disabled:0};users.forEach(u=>{counts[u.status]=(counts[u.status]||0)+1});
  const rows=users.map(u=>{const st=u.status==='active'?'ok:Active':u.status==='invited'?'mut:Invited':'mut:Disabled';
-  const chips='html:<div class="role-chips">'+(u.assignments.map(a=>'<span>'+esc(a.environment)+':'+esc(a.role)+'</span>').join('')||'<span>none</span>')+'</div>';
+  const roleNames=u.roles&&u.roles.length?u.roles:[...new Set((u.assignments||[]).map(a=>a.role))];
+  const chips='html:<div class="role-chips">'+(roleNames.map(r=>'<span>'+esc(r)+'</span>').join('')||'<span>none</span>')+'</div>';
   const chk='html:<label class="row-chk"><input type="checkbox" class="u-chk" data-uid="'+esc(u.id)+'" aria-label="Select '+esc(u.name||u.email)+'"></label>';
-  const acts='html:<button type="button" class="uact-gear" data-uact="roles" data-uid="'+esc(u.id)+'" title="Roles" aria-label="Roles"><img src="/stickers/settings.png" alt="" width="13" height="13" decoding="async"></button>'
+  const acts='html:<button type="button" class="uact-gear" data-uact="roles" data-uid="'+esc(u.id)+'" title="Change roles" aria-label="Change roles"><img src="/stickers/settings.png" alt="" width="13" height="13" decoding="async"></button>'
    +' <button type="button" class="b2 sm" data-uact="remove" data-uid="'+esc(u.id)+'" style="color:var(--bad)" title="Remove user">'+I('trash',12)+'</button>';
   return [chk,u.name,u.email,chips,st,u.lastActiveAt?ago(u.lastActiveAt):'–',acts]});
- const html=hd('Users','Users <span>('+users.length+')</span>','Manage people and their environment access.')
+ const html=hd('Users','Users <span>('+users.length+')</span>','Manage people. First SSO login is Admin; later users join as Viewer. Admins can change roles anytime.')
   +heroCards('Users')
   +kp([['Users',users.length],['Active',counts.active||0,'','',C[1]],['Invited',counts.invited||0],['Disabled',counts.disabled||0]])
   +'<div class="fl users-bar">'
@@ -3742,23 +3923,43 @@ async function usersAdmin(){if(!isAdmin())return hd('Users','Users','Admin acces
   +'<button type="button" class="aws-btn aws-btn-out" id="u-enable" data-uact-bulk="enable" disabled>Enable</button>'
   +'</div></div>'
   +'<div class="tw tall" id="gt">'+tbl(['__chk','Name','Email','Roles','Status','Last active','Actions'],rows)+'</div>'
+  /* ── Roles section ────────────────────────────────────────────── */
+  +'<div class="sh2-row" style="margin-top:28px"><h2 class="sh2">Roles</h2><button type="button" class="b1" data-t="Create role">'+I('plus',16)+'Create role</button></div>'
+  +'<p class="vdsc" style="margin:-8px 0 14px">Admin and Viewer are built-in. Admins can add roles and choose sidebar permissions for each.</p>'
+  +(()=>{
+   const roles=rolesStore();
+   const rRows=roles.map(r=>{
+    const perms=(r.permissions||[]);
+    const preview=perms.length<=4?perms.join(', '):(perms.slice(0,4).join(', ')+' +'+(perms.length-4)+' more');
+    const acts='html:<button class="b2 sm" data-role-edit="'+esc(r.name)+'">'+I('edit',14)+'Edit</button>'
+     +(r.builtin?'':' <button class="b2 sm" data-role-remove="'+esc(r.name)+'" style="color:var(--bad)">'+I('trash',14)+'Remove</button>');
+    return [esc(r.name),r.builtin?'ok:Built-in':'mut:Custom',esc(r.description||'—'),esc(preview||'—'),String(perms.length),acts];
+   });
+   return kp([['Roles',roles.length],['Built-in',roles.filter(r=>r.builtin).length,'Admin + Viewer','',C[1]],['Custom',roles.filter(r=>!r.builtin).length,'Created by admins']])
+    +'<div class="tw" id="gt-roles">'+tbl(['Role','Type','Description','Sidebar access','Pages','Actions'],rRows)+'</div>';
+  })()
   /* ── Teams / Groups section ───────────────────────────────────── */
   +'<div class="sh2-row" style="margin-top:28px"><h2 class="sh2">Groups</h2><button type="button" class="b1" data-t="Create team">'+I('plus',16)+'Create group</button></div>'
-  +'<p class="vdsc" style="margin:-8px 0 14px">Groups decide which repositories and environments people can access.</p>'
+  +'<p class="vdsc" style="margin:-8px 0 14px">Groups control repositories, roles, and optional sidebar permissions.</p>'
   +(()=>{
    let groups=[];
    try{groups=JSON.parse(sessionStorage.getItem('tp-groups')||'[]');}catch(e){}
+   const repoLabel=g=>{const r=g.repositories;if(Array.isArray(r))return r.join(', ')||'—';return r||'—'};
+   const roleLabel=g=>{if(Array.isArray(g.roles))return g.roles.join(', ')||'—';return g.defaultRole||'—'};
+   const permLabel=g=>{const p=g.permissions;if(!Array.isArray(p)||!p.length)return 'From roles';return p.length+' pages'};
    const gRows=groups.length?groups.map(g=>[
     esc(g.name),
     String(g.members||0),
-    g.repositories||'—',
-    g.environments||'—',
-    g.defaultRole||'—',
-    'html:<button class="b2 sm" data-cg-members="'+esc(g.name)+'">'+I('users',14)+'Add members</button>'
+    esc(repoLabel(g)),
+    esc(roleLabel(g)),
+    esc(permLabel(g)),
+    'html:<button class="b2 sm" data-cg-edit="'+esc(g.name)+'">'+I('edit',14)+'Edit</button>'
+    +' <button class="b2 sm" data-cg-members="'+esc(g.name)+'">'+I('users',14)+'Members</button>'
     +' <button class="b2 sm" data-cg-remove="'+esc(g.name)+'" style="color:var(--bad)">'+I('trash',14)+'Remove</button>'
    ]):[['No groups yet','—','—','—','—','—']];
-   return kp([['Groups',groups.length],['Members',groups.reduce((s,g)=>s+Number(g.members||0),0),'Across all groups'],['Repositories covered',groups.filter(g=>g.repositories==='All').length,'Full access','',C[1]],['Environments covered',groups.filter(g=>g.environments==='All').length,'Full access','',C[1]]])
-    +'<div class="tw" id="gt-teams">'+tbl(['Group','Members','Repositories','Environments','Default role','Actions'],gRows)+'</div>';
+   const fullRepo=groups.filter(g=>{const r=g.repositories;return r==='All'||(Array.isArray(r)&&r.includes('All'))}).length;
+   return kp([['Groups',groups.length],['Members',groups.reduce((s,g)=>s+Number(g.members||0),0),'Across all groups'],['Full repo access',fullRepo,'Groups with All repos','',C[1]]])
+    +'<div class="tw" id="gt-teams">'+tbl(['Group','Members','Repositories','Roles','Permissions','Actions'],gRows)+'</div>';
   })();
  window.__usersCache=users;return html}
 /* ── Terraform Automate ──────────────────────────────────────────── */
@@ -4140,18 +4341,34 @@ $('dash').addEventListener('click',async e=>{
   if(runBtn){const nr=$('nr');if(nr)nr.click();else toast('Open Run terraform from the header');return}
   return;
  }
- const b=e.target.closest('[data-t],[data-uact],[data-uact-bulk],[data-bb],[data-env],[data-va],[data-ig],[data-ic],[data-plan-pr],[data-cr],[data-cg-members],[data-cg-remove],[data-nc-remove],[data-nc-edit],[data-nc-show],[data-at-play],[data-at-remove],[data-at-edit],[data-at-log]');if(!b)return;
+ const b=e.target.closest('[data-t],[data-uact],[data-uact-bulk],[data-bb],[data-env],[data-va],[data-ig],[data-ic],[data-plan-pr],[data-cr],[data-cg-members],[data-cg-edit],[data-cg-remove],[data-role-edit],[data-role-remove],[data-nc-remove],[data-nc-edit],[data-nc-show],[data-at-play],[data-at-remove],[data-at-edit],[data-at-log]');if(!b)return;
  if(b.dataset.t==='Export CSV'||b.id==='audit-export'){if(!isAdmin()){toast('Admin only');return}
   try{const res=await fetch(API+'/audit-logs/export?format=csv&limit=5000',{credentials:'same-origin'});
    if(!res.ok)throw new Error('Export failed ('+res.status+')');
    const blob=await res.blob();const url=URL.createObjectURL(blob);const a=document.createElement('a');
    a.href=url;a.download='terraplan-audit-'+new Date().toISOString().slice(0,10)+'.csv';a.click();URL.revokeObjectURL(url);toast('Audit CSV downloaded')}catch(err){toast(err.message)}return}
  if(b.dataset.cgMembers!==undefined){if(!isAdmin()){toast('Admin only');return}openAddGroupMembersModal(b.dataset.cgMembers);return}
+ if(b.dataset.cgEdit!==undefined){if(!isAdmin()){toast('Admin only');return}
+  let groups=[];try{groups=JSON.parse(sessionStorage.getItem('tp-groups')||'[]')}catch(e){}
+  const group=groups.find(g=>g.name===b.dataset.cgEdit);if(!group){toast('Group not found');return}
+  openCreateGroupModal(group);return}
  if(b.dataset.cgRemove!==undefined){if(!isAdmin()){toast('Admin only');return}
   const gname=b.dataset.cgRemove;
   openConfirmModal({title:'Remove group',message:'Remove group "'+gname+'"? Members will lose the group access policy.',confirmLabel:'Remove group',confirmClass:'btn-danger',onConfirm:()=>{
    try{const gs=JSON.parse(sessionStorage.getItem('tp-groups')||'[]');const i=gs.findIndex(g=>g.name===gname);if(i>=0){gs.splice(i,1);sessionStorage.setItem('tp-groups',JSON.stringify(gs))}
    }catch(e){}toast('Group "'+gname+'" removed');if(window.__refreshUsers)window.__refreshUsers()}});
+  return}
+ if(b.dataset.t==='Create role'){if(!isAdmin()){toast('Admin only');return}openRoleModal();return}
+ if(b.dataset.roleEdit!==undefined){if(!isAdmin()){toast('Admin only');return}
+  const role=rolesStore().find(r=>r.name===b.dataset.roleEdit);if(!role){toast('Role not found');return}
+  openRoleModal(role);return}
+ if(b.dataset.roleRemove!==undefined){if(!isAdmin()){toast('Admin only');return}
+  const rname=b.dataset.roleRemove;
+  const role=rolesStore().find(r=>r.name===rname);
+  if(role&&role.builtin){toast('Built-in roles cannot be removed');return}
+  openConfirmModal({title:'Remove role',message:'Remove role "'+rname+'"? Users keep their API role until reassigned.',confirmLabel:'Remove role',confirmClass:'btn-danger',onConfirm:()=>{
+   saveRolesStore(rolesStore().filter(r=>r.name!==rname));
+   toast('Role "'+rname+'" removed');if(window.__refreshUsers)window.__refreshUsers()}});
   return}
  if(b.dataset.t==='Invite user'){if(!isAdmin()){toast('Admin only');return}openUserModal('invite');return}
  if(b.dataset.t==='Automate it'){openAutomateModal();return}
