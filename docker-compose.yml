@@ -1,0 +1,130 @@
+name: terraplan
+
+# `docker compose up -d postgres redis` starts only the infrastructure (for
+# running the apps natively with `pnpm dev`). `docker compose --profile apps up`
+# also builds and runs web, api and runner in containers.
+
+x-app-env: &app-env
+  NODE_ENV: production
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  DATABASE_URL: postgresql://terraplan:terraplan@postgres:5432/terraplan?schema=public
+  REDIS_URL: redis://redis:6379
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: terraplan
+      POSTGRES_PASSWORD: terraplan
+      POSTGRES_DB: terraplan
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U terraplan -d terraplan']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ['redis-server', '--appendonly', 'yes']
+    ports:
+      - '${REDIS_PORT:-6379}:6379'
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    profiles: [apps]
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    command:
+      [
+        'sh',
+        '-c',
+        'pnpm --filter @terraplan/shared exec prisma migrate deploy && pnpm --filter @terraplan/shared exec prisma db seed',
+      ]
+    environment: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    profiles: [apps]
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    environment:
+      <<: *app-env
+      API_PORT: 4000
+      API_PUBLIC_URL: http://localhost:4000
+      WEB_PUBLIC_URL: http://localhost:${WEB_PORT:-3005}
+      CORS_ORIGIN: http://localhost:${WEB_PORT:-3005}
+      SESSION_SECRET: ${SESSION_SECRET:-dev-only-change-me-terraplan-session-secret}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      AUTH_BOOTSTRAP_ADMIN_EMAIL: ${AUTH_BOOTSTRAP_ADMIN_EMAIL:-admin@terraplan.local}
+      AUTH_ALLOW_AUTO_JOIN: ${AUTH_ALLOW_AUTO_JOIN:-false}
+    ports:
+      - '4000:4000'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://localhost:4000/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  runner:
+    profiles: [apps]
+    build:
+      context: .
+      dockerfile: apps/runner/Dockerfile
+    environment:
+      <<: *app-env
+      RUNNER_MODE: ${RUNNER_MODE:-simulate}
+      RUNNER_CONCURRENCY: ${RUNNER_CONCURRENCY:-2}
+      RUNNER_HEALTH_PORT: 4100
+      TERRAFORM_WORKSPACES_DIR: /workspaces
+    volumes:
+      - ./.runner-workspaces:/workspaces
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  web:
+    profiles: [apps]
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    environment:
+      NODE_ENV: production
+      WEB_PORT: 3005
+      API_INTERNAL_URL: http://api:4000
+    ports:
+      - '${WEB_PORT:-3005}:3005'
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  redisdata:

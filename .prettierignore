@@ -1,0 +1,11 @@
+node_modules
+dist
+.next
+coverage
+pnpm-lock.yaml
+.turbo
+terraplan.html
+# Ported verbatim from terraplan.html; kept in its original compact form.
+apps/web/public/terraplan.js
+apps/web/app/terraplan.css
+apps/web/app/markup.ts

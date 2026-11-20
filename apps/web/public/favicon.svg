@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="tp">
+  <!-- terraplan brand: ink ground, white t + amber p -->
+  <rect width="32" height="32" rx="8" fill="#0f1724"/>
+  <!-- t -->
+  <path fill="#ffffff" d="M6.2 8.4h9.2v2.7H12.1v12.5H9.5V11.1H6.2z"/>
+  <!-- p -->
+  <path fill="#ff8a00" d="M17.2 8.4h4.05c3.35 0 5.45 1.85 5.45 4.85 0 3.05-2.1 4.9-5.45 4.9H19.8v5.65h-2.6zm2.6 2.55v4.65h1.35c1.7 0 2.75-.9 2.75-2.35s-1.05-2.3-2.75-2.3z"/>
+</svg>

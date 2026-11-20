@@ -1,0 +1,50 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "globalDependencies": [".env"],
+  "globalPassThroughEnv": [
+    "NODE_ENV",
+    "DATABASE_URL",
+    "REDIS_URL",
+    "API_PORT",
+    "API_INTERNAL_URL",
+    "CORS_ORIGIN",
+    "WEB_PORT",
+    "RUNNER_MODE",
+    "RUNNER_CONCURRENCY",
+    "RUNNER_HEALTH_PORT",
+    "TERRAFORM_BIN",
+    "TERRAFORM_WORKSPACES_DIR",
+    "LOG_LEVEL",
+    "API_PUBLIC_URL",
+    "WEB_PUBLIC_URL",
+    "SESSION_SECRET",
+    "SESSION_TTL_HOURS",
+    "GOOGLE_CLIENT_ID",
+    "GOOGLE_CLIENT_SECRET",
+    "AUTH_BOOTSTRAP_ADMIN_EMAIL",
+    "AUTH_ALLOW_AUTO_JOIN",
+    "CREDENTIALS_ENCRYPTION_KEY"
+  ],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
+    },
+    "dev": {
+      "dependsOn": ["^build"],
+      "cache": false,
+      "persistent": true
+    },
+    "start": {
+      "dependsOn": ["build"],
+      "cache": false,
+      "persistent": true
+    },
+    "lint": {
+      "dependsOn": ["^build"]
+    },
+    "typecheck": {
+      "dependsOn": ["^build"]
+    }
+  }
+}

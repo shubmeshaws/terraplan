@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "terraplan.fullname" . }}-runner
+  labels:
+    {{- include "terraplan.labels" . | nindent 4 }}
+    app.kubernetes.io/component: runner
+spec:
+  replicas: {{ .Values.runner.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: runner
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: runner
+    spec:
+      {{- if .Values.runner.serviceAccount.create }}
+      serviceAccountName: {{ .Values.runner.serviceAccount.name }}
+      {{- end }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: runner
+          image: "{{ .Values.image.registry }}{{ .Values.image.runner.repository }}:{{ .Values.image.runner.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: health
+              containerPort: {{ .Values.runner.healthPort }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "terraplan.fullname" . }}
+            - secretRef:
+                name: {{ include "terraplan.secretName" . }}
+          env:
+            - name: RUNNER_HEALTH_PORT
+              value: {{ .Values.runner.healthPort | quote }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.runner.resources | nindent 12 }}
+          volumeMounts:
+            - name: work
+              mountPath: /tmp/terraplan
+      volumes:
+        - name: work
+          emptyDir: {}

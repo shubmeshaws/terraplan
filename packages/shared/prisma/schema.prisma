@@ -1,0 +1,244 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RunAction {
+  plan
+  apply
+  destroy
+}
+
+enum RunStatus {
+  waiting_approval
+  queued
+  running
+  succeeded
+  failed
+  cancelled
+}
+
+enum AuthProvider {
+  bitbucket
+  google
+}
+
+enum UserStatus {
+  invited
+  active
+  disabled
+}
+
+enum RoleName {
+  Viewer
+  Planner
+  Applier
+  Admin
+}
+
+enum BitbucketAuthMode {
+  oauth_consumer
+  app_password
+}
+
+model Run {
+  id             String      @id @default(cuid())
+  repository     String
+  branch         String
+  environment    String
+  action         RunAction
+  status         RunStatus   @default(queued)
+  triggeredBy    String
+  commitSha      String?
+  approvedBy     String?
+  planSummary    String?
+  /// Live/redacted console log (also streamed via Redis + SSE).
+  output         String?
+  error          String?
+  /// S3 (or local) object keys for durable artifacts.
+  planFileKey    String?
+  planJsonKey    String?
+  logFileKey     String?
+  terraformVersion String?
+  /// For apply: the succeeded plan run whose saved .tfplan must be applied exactly.
+  sourcePlanRunId String?
+  pullRequestId  Int?
+  pullRequestUrl String?
+  prCommentId    String?
+  prCommentPostedAt DateTime?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  startedAt      DateTime?
+  finishedAt     DateTime?
+
+  lock           EnvironmentLock?
+  sourcePlanRun  Run?  @relation("PlanApplies", fields: [sourcePlanRunId], references: [id], onDelete: SetNull)
+  applyRuns      Run[] @relation("PlanApplies")
+
+  @@index([environment, status])
+  @@index([createdAt])
+  @@index([repository, pullRequestId])
+  @@index([sourcePlanRunId])
+}
+
+/// Singleton workspace connection. Secrets are AES-GCM ciphertext (never plaintext).
+model BitbucketConnection {
+  id                    String             @id @default("default")
+  workspace             String
+  authMode              BitbucketAuthMode
+  /// Encrypted JSON blob of credentials for the chosen authMode.
+  credentialsCiphertext String
+  webhookSecret         String?
+  postPlanComments      Boolean            @default(true)
+  autoPlanOnPr          Boolean            @default(false)
+  defaultPlanEnvironment String            @default("dev")
+  status                String             @default("disconnected")
+  lastError             String?
+  lastSyncAt            DateTime?
+  lastTestAt            DateTime?
+  connectedById         String?
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+
+  connectedBy User? @relation(fields: [connectedById], references: [id], onDelete: SetNull)
+  webhookDeliveries BitbucketWebhookDelivery[]
+}
+
+model BitbucketWebhookDelivery {
+  id           String   @id @default(cuid())
+  connectionId String   @default("default")
+  event        String
+  deliveryId   String?
+  repository   String?
+  pullRequestId Int?
+  payload      Json?
+  result       String   @default("received")
+  error        String?
+  createdAt    DateTime @default(now())
+
+  connection BitbucketConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
+  @@index([event])
+}
+
+/// One row per held environment. The primary key makes acquiring a lock an
+/// atomic insert: a second runner trying the same environment gets a conflict.
+model EnvironmentLock {
+  environment String      @id
+  runId       String      @unique
+  acquiredAt  DateTime    @default(now())
+
+  run Run @relation(fields: [runId], references: [id], onDelete: Cascade)
+}
+
+model User {
+  id          String        @id @default(cuid())
+  email       String        @unique
+  name        String
+  avatarUrl   String?
+  provider    AuthProvider?
+  providerId  String?
+  status      UserStatus    @default(invited)
+  invitedById String?
+  lastActiveAt DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  invitedBy            User?                 @relation("UserInvites", fields: [invitedById], references: [id])
+  invites              User[]                @relation("UserInvites")
+  roleAssignments      RoleAssignment[]
+  auditLogs            AuditLog[]            @relation("AuditActor")
+  assignedRoles        RoleAssignment[]      @relation("RoleAssigner")
+  bitbucketConnections BitbucketConnection[]
+
+  @@unique([provider, providerId])
+  @@index([status])
+}
+
+model Role {
+  id          String   @id @default(cuid())
+  name        RoleName @unique
+  description String
+  createdAt   DateTime @default(now())
+
+  assignments RoleAssignment[]
+}
+
+/// One role per user per environment. Permissions are derived from the role
+/// name and the environment (see packages/shared/src/rbac.ts).
+model RoleAssignment {
+  id           String      @id @default(cuid())
+  userId       String
+  roleId       String
+  environment  String
+  assignedById String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  user       User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role       Role  @relation(fields: [roleId], references: [id])
+  assignedBy User? @relation("RoleAssigner", fields: [assignedById], references: [id])
+
+  @@unique([userId, environment])
+  @@index([roleId])
+}
+
+model AuditLog {
+  id          String       @id @default(cuid())
+  actorId     String?
+  actorEmail  String?
+  action      String
+  targetType  String
+  targetId    String?
+  environment String?
+  metadata    Json?
+  ip          String?
+  result      String       @default("success")
+  createdAt   DateTime     @default(now())
+
+  actor User? @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([actorId])
+  @@index([action])
+}
+
+/// Per-environment Terraform + AWS config. Runner assumes roleArn via STS
+/// (short-lived creds). Static AWS access keys are never stored.
+model EnvironmentConfig {
+  id                     String      @id @default(cuid())
+  /// Logical env name — must match Run.environment / EnvironmentLock.
+  name                   String      @unique
+  displayName            String?
+  repository             String
+  terraformDir           String      @default(".")
+  /// Backend config JSON (s3 bucket/key/region/dynamodbTable). No secrets.
+  backendConfig          Json
+  awsAccountId           String
+  /// IAM role the runner assumes with STS AssumeRole.
+  roleArn                String
+  /// Optional STS ExternalId for confused-deputy protection.
+  externalId             String?
+  /// Session duration for assumed credentials (900–43200).
+  sessionDurationSeconds Int         @default(3600)
+  /// Pinned Terraform version for this environment (e.g. "1.9.8").
+  terraformVersion       String      @default("1.9.8")
+  /// Var-file paths relative to terraformDir, e.g. ["env/dev.tfvars"].
+  variableFiles          Json        @default("[]")
+  /// Approval policy JSON (roles, approver count, hours, lock timeout).
+  approvalPolicy         Json
+  enabled                Boolean     @default(true)
+  lastAssumedAt          DateTime?
+  lastAssumeError        String?
+  createdAt              DateTime    @default(now())
+  updatedAt              DateTime    @updatedAt
+
+  @@index([awsAccountId])
+  @@index([enabled])
+}
