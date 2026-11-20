@@ -89,7 +89,8 @@ export const apiEnvSchema = z
       z.string().email().optional(),
     ),
     // If true, unknown emails that pass OAuth become Viewer on every env.
-    AUTH_ALLOW_AUTO_JOIN: boolish.default(false),
+    // Default true: after the first Admin, later Google users join as Viewer automatically.
+    AUTH_ALLOW_AUTO_JOIN: boolish.default(true),
     // AES key material for Bitbucket workspace credential encryption. Falls back to SESSION_SECRET.
     CREDENTIALS_ENCRYPTION_KEY: optionalSecret,
     // Optional: API can also read artifact metadata; uploads happen in the runner.

@@ -87,10 +87,9 @@ cp .env.example .env
 # 3. Start Postgres and Redis
 pnpm infra:up
 
-# 4. Build the shared package, create the schema and load sample runs
+# 4. Build the shared package, migrate schema, and seed roles
 pnpm --filter @terraplan/shared build
 pnpm db:deploy
-pnpm db:seed
 
 # 5. Run web, api and runner in watch mode
 pnpm dev
@@ -98,8 +97,10 @@ pnpm dev
 
 Open http://localhost:3005 (or your `WEB_PORT`). Sign in with Google after setting
 `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` and the callback
-`{WEB_PUBLIC_URL}/api/v1/auth/google/callback` (same port as the web app). Invite users under
-**Admin → Users**, or **Run terraform** to queue a plan.
+`{WEB_PUBLIC_URL}/api/v1/auth/google/callback` (same port as the web app).
+
+**First Google sign-in becomes Admin.** Later users join as Viewer when
+`AUTH_ALLOW_AUTO_JOIN=true` (default in `.env.example`), or after an Admin invite.
 
 In the default `RUNNER_MODE=simulate` the runner produces realistic plan/apply output without
 touching any cloud. A branch name containing `fail` simulates a failed plan.
@@ -199,7 +200,7 @@ starts web on http://localhost:3005, the API on 4000 and the runner. Use
 | `pnpm format`     | Prettier write (`format:check` to verify)       |
 | `pnpm db:migrate` | Create a new migration after editing the schema |
 | `pnpm db:deploy`  | Apply migrations                                |
-| `pnpm db:seed`    | Load the sample runs (skipped if runs exist)    |
+| `pnpm db:seed`    | Upsert Viewer/Planner/Applier/Admin roles       |
 | `pnpm db:studio`  | Prisma Studio                                   |
 | `pnpm infra:up`   | Start Postgres and Redis containers             |
 

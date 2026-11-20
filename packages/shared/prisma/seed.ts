@@ -28,7 +28,12 @@ async function seedRoles() {
 }
 
 async function seedBootstrapAdmin() {
-  const email = (process.env.AUTH_BOOTSTRAP_ADMIN_EMAIL || 'admin@terraplan.local').toLowerCase();
+  const email = process.env.AUTH_BOOTSTRAP_ADMIN_EMAIL?.trim().toLowerCase();
+  // Leave users empty so the first Google sign-in becomes Admin.
+  if (!email) {
+    console.log('No AUTH_BOOTSTRAP_ADMIN_EMAIL — first login will become Admin.');
+    return;
+  }
   const roles = await prisma.role.findMany();
   const adminRole = roles.find((r) => r.name === 'Admin');
   if (!adminRole) throw new Error('Admin role missing');

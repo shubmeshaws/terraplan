@@ -1,7 +1,9 @@
 import {
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
+  OnModuleInit,
   UnauthorizedException,
 } from '@nestjs/common';
 import type { SessionUser } from '@terraplan/shared';
@@ -14,12 +16,32 @@ import type { OAuthProfile } from './oauth.providers';
 
 const userInclude = { roleAssignments: { include: { role: true } } } as const;
 
+const ROLE_DEFS: { name: 'Viewer' | 'Planner' | 'Applier' | 'Admin'; description: string }[] = [
+  { name: 'Viewer', description: 'Can view runs and plans in assigned environments.' },
+  { name: 'Planner', description: 'Can run plans on lower environments (dev, qa, uat).' },
+  {
+    name: 'Applier',
+    description: 'Can plan everywhere and apply on non-prod environments.',
+  },
+  {
+    name: 'Admin',
+    description: 'Full access: prod applies, destroys, approvals and user management.',
+  },
+];
+
 @Injectable()
-export class AuthService {
+export class AuthService implements OnModuleInit {
+  private readonly log = new Logger(AuthService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
   ) {}
+
+  async onModuleInit() {
+    await this.ensureRoles();
+    this.log.log('Roles ready — first OAuth sign-in becomes Admin');
+  }
 
   async getSessionUser(userId: string): Promise<SessionUser> {
     const user = await this.prisma.user.findUnique({ where: { id: userId }, include: userInclude });
@@ -35,10 +57,21 @@ export class AuthService {
     });
   }
 
+  /** Ensure Viewer/Planner/Applier/Admin rows exist (safe after a fresh migrate). */
+  private async ensureRoles() {
+    for (const role of ROLE_DEFS) {
+      await this.prisma.role.upsert({
+        where: { name: role.name },
+        create: role,
+        update: { description: role.description },
+      });
+    }
+  }
+
   /**
    * Links an OAuth profile to an invited/existing user, or creates one when
-   * the first Google user, AUTH_ALLOW_AUTO_JOIN, or bootstrap admin rules allow it.
-   * The first Google sign-in becomes Admin.
+   * this is the first user, AUTH_ALLOW_AUTO_JOIN, or bootstrap admin rules allow it.
+   * The first sign-in becomes Admin; later auto-join users become Viewer.
    */
   async upsertFromOAuth(profile: OAuthProfile, ip?: string | null): Promise<SessionUser> {
     const email = profile.email.trim().toLowerCase();
@@ -106,17 +139,21 @@ export class AuthService {
       return toSessionUser(updated);
     }
 
+    await this.ensureRoles();
+
     const bootstrap = env.AUTH_BOOTSTRAP_ADMIN_EMAIL?.toLowerCase();
     const isBootstrap = !!bootstrap && bootstrap === email;
-    const googleUserCount = await this.prisma.user.count({ where: { provider: 'google' } });
-    const isFirstGoogleUser = profile.provider === 'google' && googleUserCount === 0;
-    if (!isBootstrap && !isFirstGoogleUser && !env.AUTH_ALLOW_AUTO_JOIN) {
+    // First OAuth sign-in → Admin. Everyone after → Viewer (normal user).
+    const signedInCount = await this.prisma.user.count({ where: { provider: { not: null } } });
+    const isFirstUser = signedInCount === 0;
+    const allowAutoJoin = env.AUTH_ALLOW_AUTO_JOIN !== false;
+    if (!isBootstrap && !isFirstUser && !allowAutoJoin) {
       throw new ForbiddenException(
         'No terraplan account for this email. Ask an admin to invite you.',
       );
     }
 
-    const roleName = isBootstrap || isFirstGoogleUser ? 'Admin' : 'Viewer';
+    const roleName = isBootstrap || isFirstUser ? 'Admin' : 'Viewer';
     const role = await this.prisma.role.findUnique({ where: { name: roleName } });
     if (!role) throw new NotFoundException(`${roleName} role is not seeded`);
 
@@ -147,7 +184,7 @@ export class AuthService {
       metadata: {
         provider: profile.provider,
         role: roleName,
-        ...(isFirstGoogleUser ? { via: 'first-google' } : {}),
+        via: isFirstUser ? 'first-user' : 'auto-join',
       },
       ip,
     });

@@ -27,8 +27,7 @@ docker build -f apps/runner/Dockerfile -t $ECR/terraplan-runner:0.1.0 .
 ### 2. Migrate database
 
 ```bash
-pnpm --filter @terraplan/shared exec prisma migrate deploy
-pnpm --filter @terraplan/shared exec prisma db seed   # optional bootstrap
+pnpm db:deploy   # migrate + seed roles; first Google login becomes Admin
 ```
 
 ### 3. Helm (manual) or Terraform module
