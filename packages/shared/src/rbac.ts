@@ -1,8 +1,12 @@
 import { z } from 'zod';
-import { envNameSchema, type Environment, type RunAction } from './domain';
+import { ENVIRONMENTS, envNameSchema, type Environment, type RunAction } from './domain';
 
 export const ROLE_NAMES = ['Viewer', 'Planner', 'Applier', 'Admin'] as const;
 export type RoleName = (typeof ROLE_NAMES)[number];
+
+/** Roles shown in the product UI (global memberships). */
+export const DEFAULT_ROLES = ['Admin', 'Viewer'] as const;
+export type DefaultRoleName = (typeof DEFAULT_ROLES)[number];
 
 export const AUTH_PROVIDERS = ['bitbucket', 'google'] as const;
 export type AuthProvider = (typeof AUTH_PROVIDERS)[number];
@@ -32,7 +36,7 @@ export const ROLE_RANK: Record<RoleName, number> = {
 
 /**
  * Permissions a role grants on a given environment.
- * Mirrors the "Roles and permissions" matrix in the UI.
+ * Admin / Viewer are global; Planner / Applier kept for legacy rows.
  */
 export function permissionsFor(role: RoleName, environment: Environment): readonly Permission[] {
   const view: Permission[] = ['runs:view'];
@@ -64,7 +68,22 @@ export function hasPermission(
   return permissionsFor(role, environment).includes(permission);
 }
 
-/** Highest-ranked role across every environment assignment. */
+/**
+ * Global multi-role check: Admin on any assignment unlocks everything;
+ * otherwise union permissions from every role against the target environment.
+ */
+export function userHasPermission(
+  assignments: Iterable<{ role: RoleName; environment?: string }>,
+  environment: Environment,
+  permission: Permission,
+): boolean {
+  const roles: RoleName[] = [];
+  for (const a of assignments) roles.push(a.role);
+  if (isAdmin(roles)) return true;
+  return roles.some((role) => hasPermission(role, environment, permission));
+}
+
+/** Highest-ranked role across every assignment. */
 export function highestRole(roles: Iterable<RoleName>): RoleName | null {
   let best: RoleName | null = null;
   for (const r of roles) {
@@ -90,7 +109,7 @@ export function permissionForAction(action: RunAction): Permission {
 }
 
 export interface RoleAssignmentDto {
-  environment: Environment;
+  environment: Environment | '*';
   role: RoleName;
 }
 
@@ -102,6 +121,8 @@ export interface UserDto {
   provider: AuthProvider | null;
   status: UserStatus;
   assignments: RoleAssignmentDto[];
+  /** Distinct role names (Admin / Viewer / …). */
+  roles: RoleName[];
   highestRole: RoleName | null;
   invitedById: string | null;
   lastActiveAt: string | null;
@@ -116,6 +137,7 @@ export interface SessionUser {
   provider: AuthProvider | null;
   status: UserStatus;
   assignments: RoleAssignmentDto[];
+  roles: RoleName[];
   highestRole: RoleName | null;
   permissions: Partial<Record<Environment, Permission[]>>;
 }
@@ -135,26 +157,52 @@ export interface AuditLogDto {
 }
 
 export const roleAssignmentInputSchema = z.object({
-  environment: envNameSchema,
+  environment: envNameSchema.or(z.literal('*')).default('*'),
   role: z.enum(ROLE_NAMES),
 });
 
-export const inviteUserSchema = z.object({
-  email: z
-    .string()
-    .trim()
-    .email()
-    .max(200)
-    .transform((e) => e.toLowerCase()),
-  name: z.string().trim().min(1).max(100).optional(),
-  assignments: z.array(roleAssignmentInputSchema).min(1).max(50),
-});
+const defaultRoleSchema = z.enum(DEFAULT_ROLES);
+
+/** Preferred invite/update payload: one or more global roles. */
+export const inviteUserSchema = z
+  .object({
+    email: z
+      .string()
+      .trim()
+      .email()
+      .max(200)
+      .transform((e) => e.toLowerCase()),
+    name: z.string().trim().min(1).max(100).optional(),
+    roles: z.array(defaultRoleSchema).min(1).max(10).optional(),
+    /** Legacy per-environment assignments — still accepted. */
+    assignments: z.array(roleAssignmentInputSchema).min(1).max(50).optional(),
+  })
+  .superRefine((val, ctx) => {
+    if (!val.roles?.length && !val.assignments?.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['roles'],
+        message: 'Pick at least one role (Admin or Viewer)',
+      });
+    }
+  });
 
 export type InviteUserInput = z.infer<typeof inviteUserSchema>;
 
-export const updateUserRolesSchema = z.object({
-  assignments: z.array(roleAssignmentInputSchema).min(1).max(50),
-});
+export const updateUserRolesSchema = z
+  .object({
+    roles: z.array(defaultRoleSchema).min(1).max(10).optional(),
+    assignments: z.array(roleAssignmentInputSchema).min(1).max(50).optional(),
+  })
+  .superRefine((val, ctx) => {
+    if (!val.roles?.length && !val.assignments?.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['roles'],
+        message: 'Pick at least one role (Admin or Viewer)',
+      });
+    }
+  });
 
 export type UpdateUserRolesInput = z.infer<typeof updateUserRolesSchema>;
 
@@ -188,13 +236,35 @@ export const exportAuditLogsQuerySchema = z.object({
 
 export type ExportAuditLogsQuery = z.infer<typeof exportAuditLogsQuerySchema>;
 
+/** Normalize invite/update input into distinct global role assignments. */
+export function normalizeRoleAssignments(
+  input: { roles?: DefaultRoleName[]; assignments?: RoleAssignmentDto[] },
+): RoleAssignmentDto[] {
+  if (input.roles?.length) {
+    const unique = [...new Set(input.roles)];
+    return unique.map((role) => ({ environment: '*' as const, role }));
+  }
+  const byRole = new Map<RoleName, RoleAssignmentDto>();
+  for (const a of input.assignments || []) {
+    const prev = byRole.get(a.role);
+    if (!prev || ROLE_RANK[a.role] >= ROLE_RANK[prev.role]) {
+      byRole.set(a.role, { environment: '*', role: a.role });
+    }
+  }
+  return [...byRole.values()];
+}
+
 /** Builds the per-environment permission map returned to the client. */
 export function permissionMap(
   assignments: RoleAssignmentDto[],
 ): Partial<Record<Environment, Permission[]>> {
   const map: Partial<Record<Environment, Permission[]>> = {};
-  for (const a of assignments) {
-    map[a.environment] = [...permissionsFor(a.role, a.environment)];
+  for (const environment of ENVIRONMENTS) {
+    const set = new Set<Permission>();
+    for (const a of assignments) {
+      for (const p of permissionsFor(a.role, environment)) set.add(p);
+    }
+    map[environment] = [...set];
   }
   return map;
 }

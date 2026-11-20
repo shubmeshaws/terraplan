@@ -1,18 +1,14 @@
 import { PrismaClient } from '@prisma/client';
-import { ENVIRONMENTS } from '../src/domain';
 
 const prisma = new PrismaClient();
 
 const ROLE_DEFS: { name: 'Viewer' | 'Planner' | 'Applier' | 'Admin'; description: string }[] = [
-  { name: 'Viewer', description: 'Can view runs and plans in assigned environments.' },
-  { name: 'Planner', description: 'Can run plans on lower environments (dev, qa, uat).' },
-  {
-    name: 'Applier',
-    description: 'Can plan everywhere and apply on non-prod environments.',
-  },
+  { name: 'Viewer', description: 'Default SSO role. Can view runs and plans.' },
+  { name: 'Planner', description: 'Legacy role — prefer Viewer or Admin.' },
+  { name: 'Applier', description: 'Legacy role — prefer Viewer or Admin.' },
   {
     name: 'Admin',
-    description: 'Full access: prod applies, destroys, approvals and user management.',
+    description: 'First SSO user after setup. Full access including user management.',
   },
 ];
 
@@ -48,13 +44,11 @@ async function seedBootstrapAdmin() {
     update: {},
   });
 
-  for (const environment of ENVIRONMENTS) {
-    await prisma.roleAssignment.upsert({
-      where: { userId_environment: { userId: user.id, environment } },
-      create: { userId: user.id, roleId: adminRole.id, environment },
-      update: { roleId: adminRole.id },
-    });
-  }
+  await prisma.roleAssignment.upsert({
+    where: { userId_roleId: { userId: user.id, roleId: adminRole.id } },
+    create: { userId: user.id, roleId: adminRole.id, environment: '*' },
+    update: { environment: '*' },
+  });
   console.log(`Bootstrap admin ready: ${email}`);
 }
 

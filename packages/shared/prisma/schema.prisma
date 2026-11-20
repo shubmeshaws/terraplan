@@ -170,13 +170,14 @@ model Role {
   assignments RoleAssignment[]
 }
 
-/// One role per user per environment. Permissions are derived from the role
-/// name and the environment (see packages/shared/src/rbac.ts).
+/// Global roles for a user (Admin / Viewer). A user may hold multiple roles;
+/// permissions are the union (Admin wins). `environment` is kept as "*" for
+/// backwards compatibility with older rows.
 model RoleAssignment {
   id           String      @id @default(cuid())
   userId       String
   roleId       String
-  environment  String
+  environment  String      @default("*")
   assignedById String?
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
@@ -185,7 +186,7 @@ model RoleAssignment {
   role       Role  @relation(fields: [roleId], references: [id])
   assignedBy User? @relation("RoleAssigner", fields: [assignedById], references: [id])
 
-  @@unique([userId, environment])
+  @@unique([userId, roleId])
   @@index([roleId])
 }
 

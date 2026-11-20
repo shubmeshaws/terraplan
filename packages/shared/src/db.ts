@@ -1,7 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import type { AuditLog, EnvironmentLock, Role, RoleAssignment, Run, User } from '@prisma/client';
 import type { EnvironmentLockDto, RunDto, WaitingRunDto } from './domain';
-import type { AuditLogDto, RoleName, SessionUser, UserDto } from './rbac';
+import type { AuditLogDto, RoleAssignmentDto, RoleName, SessionUser, UserDto } from './rbac';
 import { highestRole, permissionMap } from './rbac';
 
 export { Prisma, PrismaClient } from '@prisma/client';
@@ -86,9 +86,10 @@ type UserWithAssignments = User & {
 
 export function toUserDto(user: UserWithAssignments): UserDto {
   const assignments = user.roleAssignments.map((a) => ({
-    environment: a.environment,
+    environment: (a.environment || '*') as RoleAssignmentDto['environment'],
     role: a.role.name as RoleName,
   }));
+  const roles = [...new Set(assignments.map((a) => a.role))];
   return {
     id: user.id,
     email: user.email,
@@ -97,7 +98,8 @@ export function toUserDto(user: UserWithAssignments): UserDto {
     provider: user.provider,
     status: user.status,
     assignments,
-    highestRole: highestRole(assignments.map((a) => a.role)),
+    roles,
+    highestRole: highestRole(roles),
     invitedById: user.invitedById,
     lastActiveAt: iso(user.lastActiveAt),
     createdAt: user.createdAt.toISOString(),
@@ -114,6 +116,7 @@ export function toSessionUser(user: UserWithAssignments): SessionUser {
     provider: dto.provider,
     status: dto.status,
     assignments: dto.assignments,
+    roles: dto.roles,
     highestRole: dto.highestRole,
     permissions: permissionMap(dto.assignments),
   };

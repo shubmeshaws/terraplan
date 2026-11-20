@@ -7,7 +7,6 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import type { SessionUser } from '@terraplan/shared';
-import { ENVIRONMENTS } from '@terraplan/shared';
 import { toSessionUser } from '@terraplan/shared/db';
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../infra/prisma.service';
@@ -17,15 +16,12 @@ import type { OAuthProfile } from './oauth.providers';
 const userInclude = { roleAssignments: { include: { role: true } } } as const;
 
 const ROLE_DEFS: { name: 'Viewer' | 'Planner' | 'Applier' | 'Admin'; description: string }[] = [
-  { name: 'Viewer', description: 'Can view runs and plans in assigned environments.' },
-  { name: 'Planner', description: 'Can run plans on lower environments (dev, qa, uat).' },
-  {
-    name: 'Applier',
-    description: 'Can plan everywhere and apply on non-prod environments.',
-  },
+  { name: 'Viewer', description: 'Default SSO role. Can view runs and plans.' },
+  { name: 'Planner', description: 'Legacy role — prefer Viewer or Admin.' },
+  { name: 'Applier', description: 'Legacy role — prefer Viewer or Admin.' },
   {
     name: 'Admin',
-    description: 'Full access: prod applies, destroys, approvals and user management.',
+    description: 'First SSO user after setup. Full access including user management.',
   },
 ];
 
@@ -153,6 +149,7 @@ export class AuthService implements OnModuleInit {
       );
     }
 
+    // First sign-in (or bootstrap email) → Admin; every later SSO user → Viewer.
     const roleName = isBootstrap || isFirstUser ? 'Admin' : 'Viewer';
     const role = await this.prisma.role.findUnique({ where: { name: roleName } });
     if (!role) throw new NotFoundException(`${roleName} role is not seeded`);
@@ -167,10 +164,7 @@ export class AuthService implements OnModuleInit {
         status: 'active',
         lastActiveAt: new Date(),
         roleAssignments: {
-          create: ENVIRONMENTS.map((environment) => ({
-            environment,
-            roleId: role.id,
-          })),
+          create: [{ environment: '*', roleId: role.id }],
         },
       },
       include: userInclude,

@@ -158,8 +158,7 @@ export class RunsService {
     });
     const policy = (envConfig?.approvalPolicy as ApprovalPolicy | null) ?? null;
     const actor = policy ? policy[run.action] : 'admin';
-    const userRole =
-      user.assignments.find((a) => a.environment === run.environment)?.role ?? user.highestRole;
+    const userRole = user.highestRole;
     if (!roleCanApprove(userRole, actor)) {
       throw new ForbiddenException(
         `Approval for ${run.action} on ${run.environment} requires ${actor} (or Admin)`,
